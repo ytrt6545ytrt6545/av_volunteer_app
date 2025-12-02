@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // Import Firebase Auth
+import 'package:av_volunteer_app/firebase_options.dart';
 import 'package:av_volunteer_app/models/volunteer_model.dart';
+import 'package:av_volunteer_app/models/event_model.dart';
 import 'package:av_volunteer_app/screens/events_screen.dart';
 import 'package:av_volunteer_app/screens/schedule_screen.dart';
 import 'package:av_volunteer_app/screens/profile_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MyApp());
 }
 
@@ -35,54 +43,60 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   Volunteer? _currentUser;
 
-  late final List<Widget> _widgetOptions;
+  final List<Event> _events = [
+    Event(title: '週日主日崇拜', date: DateTime.now().add(const Duration(days: 2)), roles: ['音控', 'PPT', '燈控']),
+    Event(title: '週五青年團契', date: DateTime.now().add(const Duration(days: 7)), roles: ['音控', 'PPT']),
+    Event(title: '特別聚會：聖誕晚會', date: DateTime.now().add(const Duration(days: 30)), roles: ['音控', 'PPT', '燈控', '直播']),
+  ];
+
+  final List<String> _allRoles = ['音控', 'PPT', '燈控', '直播', '攝影'];
 
   @override
   void initState() {
     super.initState();
-    _widgetOptions = <Widget>[
-      EventsScreen(currentUser: _currentUser),
-      const ScheduleScreen(), // ScheduleScreen doesn't depend on user role for now
-      ProfileScreen(
-        currentUser: _currentUser,
-        onLogin: _login,
-        onLogout: _logout,
-      ),
-    ];
-  }
-
-  void _login(bool isAdmin) {
-    setState(() {
-      _currentUser = Volunteer(
-        id: isAdmin ? 'uid-admin-456' : 'uid-user-123',
-        name: isAdmin ? '管理員' : '王大明',
-        email: isAdmin ? 'admin@example.com' : 'ming.wang@example.com',
-        skills: isAdmin ? ['全部'] : ['音控', 'PPT'],
-        isAdmin: isAdmin,
-      );
-      // Rebuild widget options with new user state
-      _updateWidgetOptions();
+    // Listen to Firebase auth state changes
+    FirebaseAuth.instance.authStateChanges().listen((User? user) {
+      setState(() {
+        if (user == null) {
+          _currentUser = null;
+        } else {
+          // Temporary rule: if email contains 'admin', set as admin.
+          final bool isAdmin = user.email?.contains('admin') ?? false;
+          _currentUser = Volunteer(
+            id: user.uid,
+            name: user.displayName ?? '匿名使用者',
+            email: user.email ?? 'no-email@example.com',
+            isAdmin: isAdmin,
+          );
+        }
+      });
     });
   }
 
-  void _logout() {
+  void _addEvent(Event newEvent) {
     setState(() {
-      _currentUser = null;
-      // Rebuild widget options with new user state
-      _updateWidgetOptions();
+      _events.add(newEvent);
     });
   }
-  
-  void _updateWidgetOptions() {
-    _widgetOptions = <Widget>[
-      EventsScreen(currentUser: _currentUser),
-      const ScheduleScreen(), // ScheduleScreen doesn't depend on user role for now
-      ProfileScreen(
-        currentUser: _currentUser,
-        onLogin: _login,
-        onLogout: _logout,
-      ),
-    ];
+
+  void _deleteEvent(Event event) {
+    setState(() {
+      _events.remove(event);
+    });
+  }
+
+  void _addRole(String role) {
+    if (role.isNotEmpty && !_allRoles.contains(role)) {
+      setState(() {
+        _allRoles.add(role);
+      });
+    }
+  }
+
+  void _deleteRole(String role) {
+    setState(() {
+      _allRoles.remove(role);
+    });
   }
 
   static const List<String> _widgetTitles = <String>[
@@ -99,13 +113,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final List<Widget> widgetOptions = <Widget>[
+      EventsScreen(
+        currentUser: _currentUser,
+        events: _events,
+        onAddEvent: _addEvent,
+        onDeleteEvent: _deleteEvent,
+        allRoles: _allRoles,
+      ),
+      const ScheduleScreen(),
+      ProfileScreen(
+        currentUser: _currentUser,
+        allRoles: _allRoles,
+        onAddRole: _addRole,
+        onDeleteRole: _deleteRole,
+      ),
+    ];
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(_widgetTitles[_selectedIndex]),
       ),
       body: Center(
-        child: _widgetOptions.elementAt(_selectedIndex),
+        child: widgetOptions.elementAt(_selectedIndex),
       ),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[

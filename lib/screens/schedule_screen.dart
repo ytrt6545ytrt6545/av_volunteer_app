@@ -23,26 +23,35 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     ),
   ];
 
+  // Function to handle the refresh action
+  Future<void> _handleRefresh() async {
+    // Simulate a network request for fresh data
+    await Future.delayed(const Duration(seconds: 1));
+    // In a real app, you would fetch the user's schedule from a server here
+    // and update the _myShifts list inside a setState call.
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_myShifts.isEmpty) {
-      return const Center(child: Text('您目前沒有已排班的活動'));
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(8.0),
-      itemCount: _myShifts.length,
-      itemBuilder: (context, index) {
-        final shift = _myShifts[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 8.0),
-          child: ListTile(
-            title: Text(shift.event.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('日期: ${DateFormat('yyyy-MM-dd').format(shift.event.date)}\n崗位: ${shift.role}'),
-            isThreeLine: true,
-          ),
-        );
-      },
+    return RefreshIndicator(
+      onRefresh: _handleRefresh,
+      child: _myShifts.isEmpty
+          ? const Center(child: Text('您目前沒有已排班的活動'))
+          : ListView.builder(
+              padding: const EdgeInsets.all(8.0),
+              itemCount: _myShifts.length,
+              itemBuilder: (context, index) {
+                final shift = _myShifts[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: ListTile(
+                    title: Text(shift.event.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text('日期: ${DateFormat('yyyy-MM-dd').format(shift.event.date)}\n崗位: ${shift.role}'),
+                    isThreeLine: true,
+                  ),
+                );
+              },
+            ),
     );
   }
 }
