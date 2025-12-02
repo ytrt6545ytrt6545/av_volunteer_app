@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "109550902306",
+    "project_id": "av-volunteer-app",
+    "storage_bucket": "av-volunteer-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:109550902306:android:00913a84ee6e1568c27e7b",
+        "android_client_info": {
+          "package_name": "com.example.av_volunteer_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-W2eGZk2DUC8pAoEWi1mavjaVqmQxOpQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
