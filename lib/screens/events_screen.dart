@@ -9,10 +9,11 @@ class EventsScreen extends StatefulWidget {
   final List<Event> events;
   final List<Shift> shifts;
   final Future<void> Function(Event) onAddEvent;
-  final Future<void> Function(Event) onUpdateEvent; // Receive update function
-  final Future<void> Function(Event) onDeleteEvent;
+  final Future<void> Function(Event) onUpdateEvent;
+  final Future<void> Function(Event, String?) onDeleteEvent;
   final Future<void> Function(Event, String) onSignUp;
   final Future<void> Function(Shift) onCancelSignUp;
+  final Function(Event) onSendNotification;
   final List<String> allRoles;
 
   const EventsScreen({
@@ -21,10 +22,11 @@ class EventsScreen extends StatefulWidget {
     required this.events,
     required this.shifts,
     required this.onAddEvent,
-    required this.onUpdateEvent, // Added to constructor
+    required this.onUpdateEvent,
     required this.onDeleteEvent,
     required this.onSignUp,
     required this.onCancelSignUp,
+    required this.onSendNotification,
     required this.allRoles,
   });
 
@@ -40,31 +42,35 @@ class _EventsScreenState extends State<EventsScreen> {
   void _showEventDetails(BuildContext context, Event event) {
     showDialog(
       context: context,
+      useSafeArea: false,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text(event.title),
-          content: SingleChildScrollView(
-            child: ListBody(
-              children: <Widget>[
-                Text('日期: ${DateFormat('yyyy-MM-dd (E) HH:mm').format(event.date)}'),
-                const SizedBox(height: 16),
-                Text('需要崗位:', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                ...event.roles.map((role) {
-                  final shiftForRole = widget.shifts.where((s) => s.eventId == event.id && s.role == role).firstOrNull;
-                  final isCurrentUserSignedUp = shiftForRole?.volunteerId == widget.currentUser?.id;
-                  return ListTile(
-                    title: Text(role),
-                    trailing: (shiftForRole == null)
-                        ? (widget.currentUser != null && !widget.currentUser!.isAdmin)
-                            ? ElevatedButton(onPressed: () => widget.onSignUp(event, role), child: const Text('報名'))
-                            : null
-                        : isCurrentUserSignedUp
-                            ? ElevatedButton(onPressed: () => widget.onCancelSignUp(shiftForRole), child: const Text('取消報名', style: TextStyle(color: Colors.red)))
-                            : Text(shiftForRole.volunteerName),
-                  );
-                }),
-              ],
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: ListBody(
+                children: <Widget>[
+                  Text('日期: ${DateFormat('yyyy-MM-dd (E) HH:mm').format(event.date)}'),
+                  const SizedBox(height: 16),
+                  Text('需要崗位:', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  ...event.roles.map((role) {
+                    final shiftForRole = widget.shifts.where((s) => s.eventId == event.id && s.role == role).firstOrNull;
+                    final isCurrentUserSignedUp = shiftForRole?.volunteerId == widget.currentUser?.id;
+                    return ListTile(
+                      title: Text(role),
+                      trailing: (shiftForRole == null)
+                          ? (widget.currentUser != null && !widget.currentUser!.isAdmin)
+                              ? ElevatedButton(onPressed: () => widget.onSignUp(event, role).then((_) => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('報名成功！')))), child: const Text('報名'))
+                              : null
+                          : isCurrentUserSignedUp
+                              ? ElevatedButton(onPressed: () => widget.onCancelSignUp(shiftForRole).then((_) => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已取消報名')))), child: const Text('取消報名', style: TextStyle(color: Colors.red)))
+                              : Text(shiftForRole.volunteerName),
+                    );
+                  }),
+                ],
+              ),
             ),
           ),
           actions: <Widget>[
@@ -100,24 +106,65 @@ class _EventsScreenState extends State<EventsScreen> {
   }
 
   void _showDeleteConfirmationDialog(Event event) {
+    final bool hasSignups = widget.shifts.any((shift) => shift.eventId == event.id);
+    final reasonController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
     showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: const Text('確認刪除'),
-            content: Text('您確定要刪除 "${event.title}" 這個活動嗎？此操作無法復原。'),
-            actions: <Widget>[
-              TextButton(child: const Text('取消'), onPressed: () => Navigator.of(context).pop()),
-              TextButton(
-                child: const Text('確認刪除', style: TextStyle(color: Colors.red)),
-                onPressed: () async {
-                  await widget.onDeleteEvent(event);
-                  if (mounted) Navigator.of(context).pop();
-                },
-              ),
-            ],
-          );
-        });
+      context: context,
+      useSafeArea: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('確認取消活動'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('您確定要取消 "${event.title}" 這個活動嗎？'),
+                if (hasSignups)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16.0),
+                    child: TextFormField(
+                      controller: reasonController,
+                      decoration: const InputDecoration(labelText: '取消原因 (必填)', border: OutlineInputBorder()),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return '由於已有人報名，請務必填寫取消原因';
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(child: const Text('返回'), onPressed: () => Navigator.of(context).pop()),
+            TextButton(
+              child: const Text('確認取消', style: TextStyle(color: Colors.red)),
+              onPressed: () async {
+                if (hasSignups) {
+                  if (formKey.currentState?.validate() ?? false) {
+                    await widget.onDeleteEvent(event, reasonController.text.trim());
+                    if (mounted) {
+                      Navigator.of(context).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('活動已取消')));
+                    }
+                  }
+                } else {
+                  await widget.onDeleteEvent(event, null);
+                  if (mounted) {
+                    Navigator.of(context).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('活動已刪除')));
+                  }
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showEventFormDialog({Event? existingEvent}) {
@@ -128,6 +175,7 @@ class _EventsScreenState extends State<EventsScreen> {
 
     showDialog(
       context: context,
+      useSafeArea: false,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -170,22 +218,11 @@ class _EventsScreenState extends State<EventsScreen> {
                 TextButton(child: const Text('取消'), onPressed: () => Navigator.of(context).pop()),
                 TextButton(
                   child: const Text('儲存'),
-                  onPressed: () async {
-                    if (titleController.text.isNotEmpty && selectedRoles.isNotEmpty) {
-                      final eventData = Event(
-                        id: isEditing ? existingEvent.id : null,
-                        title: titleController.text,
-                        date: selectedDate,
-                        roles: selectedRoles.toList(),
-                      );
-                      if (isEditing) {
-                        await widget.onUpdateEvent(eventData);
-                      } else {
-                        await widget.onAddEvent(eventData);
-                      }
-                      if (mounted) Navigator.of(context).pop();
-                    }
-                  },
+                  onPressed: () => _handleSave(titleController.text, selectedDate, selectedRoles, isEditing, existingEvent, false),
+                ),
+                ElevatedButton(
+                  child: const Text('儲存並發送通知'),
+                  onPressed: () => _handleSave(titleController.text, selectedDate, selectedRoles, isEditing, existingEvent, true),
                 ),
               ],
             );
@@ -195,27 +232,89 @@ class _EventsScreenState extends State<EventsScreen> {
     );
   }
 
+  void _handleSave(String title, DateTime date, Set<String> roles, bool isEditing, Event? existingEvent, bool sendNotification) async {
+    if (title.isNotEmpty && roles.isNotEmpty) {
+      final eventData = Event(
+        id: isEditing ? existingEvent!.id : null,
+        title: title,
+        date: date,
+        roles: roles.toList(),
+      );
+
+      if (isEditing) {
+        await widget.onUpdateEvent(eventData);
+      } else {
+        await widget.onAddEvent(eventData);
+      }
+
+      if (mounted) {
+         Navigator.of(context).pop();
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('活動已${isEditing ? '更新' : '新增'}！')));
+      }
+
+      if (sendNotification) {
+        widget.onSendNotification(eventData);
+         if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在發送通知...')));
+         }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: _handleRefresh,
-        child: ListView.builder(
-          padding: const EdgeInsets.all(8.0),
-          itemCount: widget.events.length,
-          itemBuilder: (context, index) {
-            final event = widget.events[index];
-            return Card(
-              margin: const EdgeInsets.symmetric(vertical: 8.0),
-              child: ListTile(
-                title: Text(event.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(DateFormat('yyyy-MM-dd (E) HH:mm').format(event.date)),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showEventDetails(context, event),
+        child: widget.events.isEmpty
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.event_busy, size: 80, color: Colors.grey[400]),
+                    const SizedBox(height: 16),
+                    Text(
+                      '目前沒有任何活動',
+                      style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                    ),
+                    if (widget.currentUser?.isAdmin ?? false)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Text(
+                          '點擊右下角的 "+" 來新增活動',
+                          style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                        ),
+                      ),
+                  ],
+                ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(12.0),
+                itemCount: widget.events.length,
+                itemBuilder: (context, index) {
+                  final event = widget.events[index];
+                  return Card(
+                    elevation: 4.0,
+                    margin: const EdgeInsets.symmetric(vertical: 10.0),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12.0),
+                    ),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 16.0),
+                      title: Text(event.title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Text(
+                          DateFormat('yyyy-MM-dd (E) HH:mm').format(event.date),
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                        ),
+                      ),
+                      trailing: Icon(Icons.arrow_forward_ios, color: Colors.grey[400]),
+                      onTap: () => _showEventDetails(context, event),
+                    ),
+                  );
+                },
               ),
-            );
-          },
-        ),
       ),
       floatingActionButton: widget.currentUser?.isAdmin ?? false
           ? FloatingActionButton(onPressed: () => _showEventFormDialog(), child: const Icon(Icons.add))

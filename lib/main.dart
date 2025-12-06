@@ -3,6 +3,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'package:av_volunteer_app/firebase_options.dart';
 import 'package:av_volunteer_app/models/volunteer_model.dart';
 import 'package:av_volunteer_app/models/event_model.dart';
@@ -11,28 +13,22 @@ import 'package:av_volunteer_app/screens/events_screen.dart';
 import 'package:av_volunteer_app/screens/schedule_screen.dart';
 import 'package:av_volunteer_app/screens/profile_screen.dart';
 
+// --- Globals for notification --- 
+const String _serverKey = 'AIzaSyCKFJ0dAhCVKmOXArvLjTNARjryu_nxY2s';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
-  final messaging = FirebaseMessaging.instance;
-  
-  await messaging.requestPermission(
-    alert: true,
-    announcement: false,
-    badge: true,
-    carPlay: false,
-    criticalAlert: false,
-    provisional: false,
-    sound: true,
-  );
-
-  // Subscribe to the 'new_event' topic
-  await messaging.subscribeToTopic("new_event");
-
+  await _setupFCM();
   runApp(const MyApp());
+}
+
+Future<void> _setupFCM() async {
+  final messaging = FirebaseMessaging.instance;
+  await messaging.requestPermission(alert: true, announcement: false, badge: true, carPlay: false, criticalAlert: false, provisional: false, sound: true);
+  await messaging.subscribeToTopic("new_event");
 }
 
 class MyApp extends StatelessWidget {
@@ -43,7 +39,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: '視聽義工管理',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.lightBlue),
         useMaterial3: true,
       ),
       home: const HomeScreen(),
@@ -67,33 +63,65 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _initializeUser();
+  }
+
+  void _initializeUser() {
     FirebaseAuth.instance.userChanges().listen((User? user) async {
       if (user == null) {
         setState(() => _currentUser = null);
       } else {
-        var userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final token = await FirebaseMessaging.instance.getToken();
+        final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+        var userDoc = await userRef.get();
         if (!userDoc.exists) {
           final defaultUserData = {
             'name': user.displayName ?? '匿名使用者',
             'email': user.email,
             'isAdmin': user.email?.contains('admin') ?? false,
             'skills': [],
+            'fcmToken': token,
           };
-          await FirebaseFirestore.instance.collection('users').doc(user.uid).set(defaultUserData);
-          userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+          await userRef.set(defaultUserData);
+          userDoc = await userRef.get();
+        } else {
+          await userRef.update({'fcmToken': token});
         }
-        final data = userDoc.data()!;
         setState(() {
-          _currentUser = Volunteer(
-            id: user.uid,
-            name: data['name'] ?? '匿名使用者',
-            email: data['email'] ?? 'no-email@example.com',
-            isAdmin: data['isAdmin'] ?? false,
-            skills: List<String>.from(data['skills'] ?? []),
-          );
+          _currentUser = Volunteer.fromFirestore(userDoc, null);
         });
       }
     });
+  }
+
+  Future<void> _sendNewEventNotification(Event event) async {
+    if (_serverKey == 'YOUR_SERVER_KEY_HERE') {
+      print('FCM Server Key has not been set in main.dart');
+      return;
+    }
+    try {
+      final response = await http.post(
+        Uri.parse('https://fcm.googleapis.com/fcm/send'),
+        headers: <String, String>{
+          'Content-Type': 'application/json',
+          'Authorization': 'key=$_serverKey',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'to': '/topics/new_event',
+          'notification': {
+            'title': '有新的活動發佈了！',
+            'body': event.title,
+          },
+        }),
+      );
+      if (response.statusCode == 200) {
+        print('Notification sent successfully.');
+      } else {
+        print('Failed to send notification: ${response.body}');
+      }
+    } catch (e) {
+      print('Error sending notification: $e');
+    }
   }
 
   Future<void> _addEvent(Event newEvent) async {
@@ -106,9 +134,29 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _deleteEvent(Event event) async {
-    if (event.id != null) {
-      await FirebaseFirestore.instance.collection('events').doc(event.id).delete();
+  Future<void> _deleteEvent(Event event, String? reason) async {
+    if (event.id == null) return;
+
+    final firestore = FirebaseFirestore.instance;
+    final shiftsQuery = await firestore.collection('shifts').where('eventId', isEqualTo: event.id).get();
+    final notifiedUsers = shiftsQuery.docs.map((doc) => doc.data()['volunteerId'] as String).toList();
+
+    if (reason != null && notifiedUsers.isNotEmpty) {
+      await firestore.collection('cancellations').doc(event.id).set({
+        'eventId': event.id,
+        'eventTitle': event.title,
+        'reason': reason,
+        'deletedAt': FieldValue.serverTimestamp(),
+        'notifiedUsers': notifiedUsers,
+      });
+    } else {
+        final WriteBatch batch = firestore.batch();
+        for (final doc in shiftsQuery.docs) {
+          batch.delete(doc.reference);
+        }
+        final eventRef = firestore.collection('events').doc(event.id);
+        batch.delete(eventRef);
+        await batch.commit();
     }
   }
 
@@ -129,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseFirestore.instance.collection('shifts').doc(shift.id).delete();
     }
   }
-
+  
   Future<void> _updateShiftStatus(Shift shift, String status, String notes) async {
     if (shift.id != null) {
       await FirebaseFirestore.instance.collection('shifts').doc(shift.id).update({
@@ -172,6 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final shiftsStream = FirebaseFirestore.instance.collection('shifts').withConverter(fromFirestore: Shift.fromFirestore, toFirestore: (Shift s, _) => s.toFirestore()).snapshots();
 
     return Scaffold(
+      resizeToAvoidBottomInset: false, // Prevent the UI from resizing when keyboard appears
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(_widgetTitles[_selectedIndex]),
@@ -197,6 +246,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onDeleteEvent: _deleteEvent,
               onSignUp: _signUpForShift,
               onCancelSignUp: _cancelSignUp,
+              onSendNotification: _sendNewEventNotification,
               allRoles: _allRoles,
             ),
             ScheduleScreen(
@@ -223,7 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.person), label: '個人資料'),
         ],
         currentIndex: _selectedIndex,
-        selectedItemColor: Colors.deepPurple,
+        selectedItemColor: Colors.blue, // Changed to blue
         onTap: _onItemTapped,
       ),
     );

@@ -70,6 +70,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final emailController = TextEditingController();
     showDialog(
       context: context,
+      useSafeArea: false, // Prevent keyboard from resizing the dialog
       builder: (context) {
         return AlertDialog(
           title: const Text('重設密碼'),
@@ -104,11 +105,118 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showManageRolesDialog(BuildContext context) {
-    // ... (This function remains unchanged)
+    final roleController = TextEditingController();
+    showDialog(
+      context: context,
+      useSafeArea: false, // Prevent keyboard from resizing the dialog
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) { 
+            return AlertDialog(
+              title: const Text('管理職位'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: roleController,
+                        decoration: const InputDecoration(hintText: '輸入新職位名稱'),
+                        onSubmitted: (value) {
+                          if (value.isNotEmpty) {
+                            widget.onAddRole(value);
+                            roleController.clear();
+                            setDialogState(() {});
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Column(
+                        children: widget.allRoles.map((role) {
+                          return ListTile(
+                            title: Text(role),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () {
+                                widget.onDeleteRole(role);
+                                setDialogState(() {});
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(child: const Text('完成'), onPressed: () => Navigator.of(context).pop()),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showEditProfileDialog(BuildContext context) {
-    // ... (This function remains unchanged)
+    final nameController = TextEditingController(text: widget.currentUser?.name ?? '');
+    final Set<String> selectedSkills = widget.currentUser?.skills.toSet() ?? {};
+
+    showDialog(
+      context: context,
+      useSafeArea: false, // Prevent keyboard from resizing the dialog
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('編輯個人資料'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(labelText: '姓名'),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('我的技能:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ...widget.allRoles.map((role) {
+                      return CheckboxListTile(
+                        title: Text(role),
+                        value: selectedSkills.contains(role),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            if (value == true) { selectedSkills.add(role); } 
+                            else { selectedSkills.remove(role); }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(child: const Text('取消'), onPressed: () => Navigator.of(context).pop()),
+                TextButton(
+                  child: const Text('儲存'),
+                  onPressed: () async {
+                    if (nameController.text.isNotEmpty) {
+                      await widget.onUpdateProfile(widget.currentUser!.id, nameController.text, selectedSkills.toList());
+                      if (mounted) {
+                        Navigator.of(context).pop();
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('個人資料已更新！')));
+                      }
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -117,8 +225,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildUserProfile() {
-     // ... (This function remains unchanged)
-     return Padding(
+    return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
